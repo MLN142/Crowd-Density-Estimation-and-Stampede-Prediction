@@ -9,6 +9,7 @@ from torchvision import transforms
 from models.csrnet import CSRNet
 from ultralytics import YOLO
 import scipy.ndimage
+import pygame # For audio alerts
 
 class CrowdCountingGUI:
     def __init__(self, root):
@@ -51,6 +52,14 @@ class CrowdCountingGUI:
         self.fixed_width = 1280
         self.fixed_height = 720
         
+        # Initialize Audio
+        try:
+            pygame.mixer.init()
+            self.sound_enabled = True
+        except Exception as e:
+            print(f"Audio initialization failed: {e}")
+            self.sound_enabled = False
+
         # Create GUI
         self.create_widgets()
         
@@ -364,6 +373,15 @@ class CrowdCountingGUI:
                 # print("Alert shown!")  # Debug
                 # Start flashing
                 self.flash_alert()
+                
+                # Play sound
+                if self.sound_enabled:
+                    try:
+                        if not pygame.mixer.music.get_busy():
+                            pygame.mixer.music.load("beep.mp3")
+                            pygame.mixer.music.play(-1) # Loop indefinitely
+                    except Exception as e:
+                        print(f"Error playing sound: {e}")
         except Exception as e:
             print(f"Error showing alert: {e}")
     
@@ -373,6 +391,10 @@ class CrowdCountingGUI:
             if self.alert_label.cget("text") != "":
                 self.alert_label.config(text="", background=self.root.cget("bg"), foreground="black")
                 # print("Alert hidden!")  # Debug
+                
+                # Stop sound
+                if self.sound_enabled:
+                    pygame.mixer.music.stop()
         except Exception as e:
             print(f"Error hiding alert: {e}")
     
@@ -397,6 +419,8 @@ class CrowdCountingGUI:
     def on_closing(self):
         if self.is_processing:
             self.stop_processing()
+        if self.sound_enabled:
+            pygame.mixer.quit()
         self.root.destroy()
 
 if __name__ == "__main__":
