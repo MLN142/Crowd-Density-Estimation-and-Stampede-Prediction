@@ -28,7 +28,12 @@ class CrowdCountingGUI:
         self.threshold_value = tk.DoubleVar(value=0.022)  # Default CSRNet threshold
         self.count_threshold = tk.IntVar(value=100)  # Default count threshold for alerts
         self.alert_active = False  # Track if alert is currently showing
+        self.count_threshold = tk.IntVar(value=100)  # Default count threshold for alerts
+        self.alert_active = False  # Track if alert is currently showing
         self.flash_state = False # Track flash state for color toggling
+        self.camera_index = tk.IntVar(value=0) # Camera index selection
+        self.flash_state = False # Track flash state for color toggling
+        self.camera_index = tk.IntVar(value=0) # Camera index selection
         
         # Model paths
         self.csrnet_path = "best_csrnet.pth"
@@ -86,6 +91,13 @@ class CrowdCountingGUI:
         ttk.Radiobutton(input_frame, text="Video File", variable=self.input_choice, value="file", command=self.on_input_change).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(input_frame, text="Camera", variable=self.input_choice, value="camera", command=self.on_input_change).pack(side=tk.LEFT, padx=5)
         
+        # Camera Index Selection
+        ttk.Label(input_frame, text="Index:").pack(side=tk.LEFT, padx=(10, 2))
+        self.camera_spinbox = ttk.Spinbox(input_frame, from_=0, to=10, textvariable=self.camera_index, width=3)
+        self.camera_spinbox.pack(side=tk.LEFT, padx=2)
+
+
+        
         # File Selection
         file_frame = ttk.Frame(control_frame)
         file_frame.pack(fill=tk.X, pady=5)
@@ -95,6 +107,8 @@ class CrowdCountingGUI:
         self.file_entry.pack(side=tk.LEFT, padx=5)
         self.browse_btn = ttk.Button(file_frame, text="Browse...", command=self.browse_file)
         self.browse_btn.pack(side=tk.LEFT, padx=5)
+
+
         
         # CSRNet Threshold Slider
         self.threshold_frame = ttk.Frame(control_frame)
@@ -164,7 +178,8 @@ class CrowdCountingGUI:
 
         
     def on_input_change(self):
-        if self.input_choice.get() == "camera":
+        choice = self.input_choice.get()
+        if choice == "camera":
             self.file_entry.config(state=tk.DISABLED)
             self.browse_btn.config(state=tk.DISABLED)
             self.video_path.set("")
@@ -211,7 +226,12 @@ class CrowdCountingGUI:
         
         # Open video source
         if self.input_choice.get() == "camera":
-            self.cap = cv2.VideoCapture(0)
+            try:
+                idx = self.camera_index.get()
+            except:
+                idx = 0
+            print(f"Attempting to open camera index: {idx}")
+            self.cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         else:
             self.cap = cv2.VideoCapture(self.video_path.get())
         
