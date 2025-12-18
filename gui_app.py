@@ -9,7 +9,7 @@ from torchvision import transforms
 from models.csrnet import CSRNet
 from ultralytics import YOLO
 import scipy.ndimage
-import pygame # For audio alerts
+import pygame 
 
 class CrowdCountingGUI:
     def __init__(self, root):
