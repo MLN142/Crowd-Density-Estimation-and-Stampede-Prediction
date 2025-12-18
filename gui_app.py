@@ -12,6 +12,11 @@ import scipy.ndimage
 import pygame 
 
 class CrowdCountingGUI:
+    def strip_module_prefix(self, state_dict):
+        if any(k.startswith('module.') for k in state_dict.keys()):
+            return {k.replace('module.', '', 1): v for k, v in state_dict.items()}
+        return state_dict
+
     def __init__(self, root):
         self.root = root
         self.root.title("Crowd Counting Application")
@@ -20,6 +25,7 @@ class CrowdCountingGUI:
         
         # Variables
         self.model_choice = tk.StringVar(value="csrnet")
+        self.view_choice = tk.StringVar(value="front") # Front or Top view
         self.input_choice = tk.StringVar(value="file")
         self.video_path = tk.StringVar(value="")
         self.is_processing = False
@@ -28,16 +34,16 @@ class CrowdCountingGUI:
         self.threshold_value = tk.DoubleVar(value=0.022)  # Default CSRNet threshold
         self.count_threshold = tk.IntVar(value=100)  # Default count threshold for alerts
         self.alert_active = False  # Track if alert is currently showing
-        self.count_threshold = tk.IntVar(value=100)  # Default count threshold for alerts
-        self.alert_active = False  # Track if alert is currently showing
         self.flash_state = False # Track flash state for color toggling
         self.camera_index = tk.IntVar(value=0) # Camera index selection
-        self.flash_state = False # Track flash state for color toggling
-        self.camera_index = tk.IntVar(value=0) # Camera index selection
+
         
         # Model paths
-        self.csrnet_path = "best_csrnet.pth"
-        self.yolo_path = "best.pt"
+        self.csrnet_path_front = "best_csrnet.pth"
+        self.csrnet_path_top = "best_csrnet_top.tar"
+        self.yolo_path_front = "best.pt"
+        self.yolo_path_top = "best_top.pt"
+
         
         # Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -83,6 +89,14 @@ class CrowdCountingGUI:
         ttk.Label(model_frame, text="Select Model:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(model_frame, text="CSRNet (Density Map)", variable=self.model_choice, value="csrnet").pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(model_frame, text="YOLOv8 (Object Detection)", variable=self.model_choice, value="yolo").pack(side=tk.LEFT, padx=5)
+
+        
+        # View Selection
+        view_frame = ttk.Frame(control_frame)
+        view_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(view_frame, text="Select View:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(view_frame, text="Front View", variable=self.view_choice, value="front").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(view_frame, text="Top View", variable=self.view_choice, value="top").pack(side=tk.LEFT, padx=5)
         
         # Input Selection
         input_frame = ttk.Frame(control_frame)
@@ -197,18 +211,61 @@ class CrowdCountingGUI:
     
     def load_model(self):
         try:
+            view = self.view_choice.get()
+            
             if self.model_choice.get() == "csrnet":
-                if self.csrnet_model is None:
-                    self.update_status("Loading CSRNet model...")
-                    self.csrnet_model = CSRNet().to(self.device)
-                    self.csrnet_model.load_state_dict(torch.load(self.csrnet_path, map_location=self.device))
-                    self.csrnet_model.eval()
-                    self.update_status("CSRNet model loaded successfully")
+                # Determine path based on view
+                path = self.csrnet_path_front if view == "front" else self.csrnet_path_top
+                
+                # Check if we need to reload (simple check: if path changed or model not loaded)
+                # For simplicity, we'll reload if the user requests it via Start. 
+                # Ideally config changes should prob trigger reload state.
+                
+                self.update_status(f"Loading CSRNet ({view})...")
+                
+                # Check view to decide Batch Norm
+                use_bn = True if view == "front" else False
+                self.csrnet_model = CSRNet(batch_norm=use_bn).to(self.device)
+                
+                # Load weights handling both .pth (state_dict) and .tar (checkpoint dict)
+                checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+                
+                state_dict = None
+                if isinstance(checkpoint, dict):
+                    if 'state_dict' in checkpoint:
+                        state_dict = checkpoint['state_dict']
+                    elif 'model' in checkpoint:
+                        state_dict = checkpoint['model']
+                    else:
+                         # Fallback for dicts that are themselves the state_dict
+                        # Check if values are tensors
+                        is_pure_dict = True
+                        for k, v in checkpoint.items():
+                             if not isinstance(v, torch.Tensor):
+                                 is_pure_dict = False
+                                 break
+                        if is_pure_dict:
+                            state_dict = checkpoint
+                
+                if state_dict is None:
+                     # Maybe it's not a dict, but the state_dict directly (unlikely)
+                     state_dict = checkpoint
+                
+                # Strip 'module.' prefix if present
+                if state_dict:
+                    state_dict = self.strip_module_prefix(state_dict)
+                    self.csrnet_model.load_state_dict(state_dict, strict=False) # strict=False to be safe with partial matches if needed
+                
+                self.csrnet_model.eval()
+                self.update_status(f"CSRNet ({view}) loaded successfully")
+                
             else:
-                if self.yolo_model is None:
-                    self.update_status("Loading YOLOv8 model...")
-                    self.yolo_model = YOLO(self.yolo_path)
-                    self.update_status("YOLOv8 model loaded successfully")
+                # YOLO
+                path = self.yolo_path_front if view == "front" else self.yolo_path_top
+                
+                self.update_status(f"Loading YOLOv8 ({view})...")
+                self.yolo_model = YOLO(path)
+                self.update_status("YOLOv8 model loaded successfully")
             return True
         except Exception as e:
             messagebox.showerror("Model Error", f"Failed to load model: {str(e)}")
