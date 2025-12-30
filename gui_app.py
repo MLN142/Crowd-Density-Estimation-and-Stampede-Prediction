@@ -36,6 +36,26 @@ class CrowdCountingGUI:
         self.alert_active = False  # Track if alert is currently showing
         self.flash_state = False # Track flash state for color toggling
         self.camera_index = tk.IntVar(value=0) # Camera index selection
+        
+        # ROI Variables
+        self.roi_coords = None # (x1, y1, x2, y2)
+        self.roi_active = False
+        self.roi_select_active = False
+        self.roi_start = None
+        self.roi_current = None
+        self.original_threshold = None # To store threshold before scaling
+        self.roi_coords = None # (x1, y1, x2, y2)
+        self.roi_active = False
+        self.roi_select_active = False
+        self.roi_start = None
+        self.roi_current = None
+        self.original_threshold = None # To store threshold before scaling
+        self.image_item = None # Canvas image item ID
+        
+        # Display Scaling Variables
+        self.display_scale = 1.0
+        self.display_offset_x = 0
+        self.display_offset_y = 0
 
         
         # Model paths
@@ -146,7 +166,18 @@ class CrowdCountingGUI:
         ttk.Label(count_threshold_frame, text="Count Alert Threshold:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         self.count_threshold_entry = ttk.Entry(count_threshold_frame, textvariable=self.count_threshold, width=10)
         self.count_threshold_entry.pack(side=tk.LEFT, padx=5)
+        self.count_threshold_entry.pack(side=tk.LEFT, padx=5)
         ttk.Label(count_threshold_frame, text="(Alert when count exceeds this value)").pack(side=tk.LEFT, padx=5)
+        
+        # ROI Controls
+        roi_frame = ttk.LabelFrame(control_frame, text="Region of Interest", padding="5")
+        roi_frame.pack(fill=tk.X, pady=5)
+        
+        self.select_roi_btn = ttk.Button(roi_frame, text="Select ROI", command=self.toggle_roi_selection)
+        self.select_roi_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.reset_roi_btn = ttk.Button(roi_frame, text="Reset ROI", command=self.reset_roi, state=tk.DISABLED)
+        self.reset_roi_btn.pack(side=tk.LEFT, padx=5)
         
         # Control Buttons
         button_frame = ttk.Frame(control_frame)
@@ -176,8 +207,8 @@ class CrowdCountingGUI:
         display_frame = ttk.LabelFrame(main_frame, text="Video Display", padding="10")
         display_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        self.canvas = tk.Canvas(display_frame, width=1280, height=720, bg="black", highlightthickness=0)
-        self.canvas.pack()
+        self.canvas = tk.Canvas(display_frame, bg="black", highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
         
         # Status Bar
         status_frame = ttk.Frame(main_frame)
@@ -325,6 +356,8 @@ class CrowdCountingGUI:
         padded_img[pad_h:pad_h+new_height, pad_w:pad_w+new_width, :] = resized_img
         return padded_img
     
+        return overlay, count
+
     def process_csrnet(self, frame):
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img_rgb = self.resize_with_padding(img_rgb)
@@ -341,6 +374,17 @@ class CrowdCountingGUI:
         threshold = self.threshold_value.get()
         density_map[density_map < threshold] = 0
         
+        # Apply ROI Mask if active
+        if self.roi_active and self.roi_coords:
+            x1, y1, x2, y2 = self.roi_coords
+            mask = np.zeros_like(density_map)
+            # Ensure coords are within bounds
+            h, w = density_map.shape
+            x1, x2 = max(0, x1), min(w, x2)
+            y1, y2 = max(0, y1), min(h, y2)
+            mask[y1:y2, x1:x2] = 1
+            density_map = density_map * mask
+            
         count = np.sum(density_map)
         
         # Create visualization
@@ -354,6 +398,10 @@ class CrowdCountingGUI:
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
         
+        # Draw ROI on overlay
+        if self.roi_active and self.roi_coords:
+             cv2.rectangle(overlay, (self.roi_coords[0], self.roi_coords[1]), (self.roi_coords[2], self.roi_coords[3]), (0, 255, 0), 2)
+        
         # Add count text
         cv2.putText(overlay, f"Count: {count:.1f}", (30, 50),
                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
@@ -365,13 +413,30 @@ class CrowdCountingGUI:
         results = self.yolo_model(frame, verbose=False)
         boxes = results[0].boxes.xyxy.cpu().numpy() if hasattr(results[0].boxes.xyxy, 'cpu') else results[0].boxes.xyxy
         
-        count = len(boxes)
+        # Filter boxes by ROI
+        filtered_boxes = []
+        if self.roi_active and self.roi_coords:
+            roi_x1, roi_y1, roi_x2, roi_y2 = self.roi_coords
+            for box in boxes:
+                x1, y1, x2, y2 = map(int, box)
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                if roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2:
+                    filtered_boxes.append(box)
+        else:
+            filtered_boxes = boxes
+            
+        count = len(filtered_boxes)
         
         # Draw bounding boxes
-        for box in boxes:
+        for box in filtered_boxes:
             x1, y1, x2, y2 = map(int, box)
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        
+            
+        # Draw ROI
+        if self.roi_active and self.roi_coords:
+             cv2.rectangle(frame, (self.roi_coords[0], self.roi_coords[1]), (self.roi_coords[2], self.roi_coords[3]), (0, 255, 0), 2)
+             
         # Add count text
         cv2.putText(frame, f"Count: {count}", (30, 50),
                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3, cv2.LINE_AA)
@@ -432,22 +497,154 @@ class CrowdCountingGUI:
         self.root.after(0, self.stop_btn.config, {"state": tk.DISABLED})
         self.root.after(0, self.start_btn.config, {"state": tk.NORMAL})
     
-    def display_frame(self, frame):
-        # Convert to PhotoImage
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(frame_rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
+    def toggle_roi_selection(self):
+        if self.roi_select_active:
+            self.stop_roi_selection()
+        else:
+            self.start_roi_selection()
+
+    def start_roi_selection(self):
+        self.roi_select_active = True
+        self.select_roi_btn.config(text="Cancel Selection")
+        self.canvas.config(cursor="crosshair")
         
-        # Update canvas
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
-        self.canvas.image = imgtk
-    
+        # Bind mouse events
+        self.canvas.bind("<ButtonPress-1>", self.on_roi_start)
+        self.canvas.bind("<B1-Motion>", self.on_roi_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_roi_end)
+
+    def stop_roi_selection(self):
+        self.roi_select_active = False
+        self.select_roi_btn.config(text="Select ROI")
+        self.canvas.config(cursor="")
+        self.canvas.unbind("<ButtonPress-1>")
+        self.canvas.unbind("<B1-Motion>")
+        self.canvas.unbind("<ButtonRelease-1>")
+        self.roi_start = None
+        self.roi_current = None
+
+    def get_model_coords(self, canvas_x, canvas_y):
+        """Convert canvas coordinates to model/image coordinates"""
+        if self.display_scale == 0: return 0, 0
+        
+        model_x = int((canvas_x - self.display_offset_x) / self.display_scale)
+        model_y = int((canvas_y - self.display_offset_y) / self.display_scale)
+        
+        # Clamp to image bounds
+        model_x = max(0, min(model_x, self.fixed_width))
+        model_y = max(0, min(model_y, self.fixed_height))
+        
+        return model_x, model_y
+
+    def display_frame(self, frame):
+        # Initial frame is BGR
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Draw dynamic selection rectangle if selecting (in model coordinates)
+        if self.roi_select_active and self.roi_start and self.roi_current:
+             cv2.rectangle(frame_rgb, self.roi_start, self.roi_current, (0, 255, 255), 2)
+        
+        # Get canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        if canvas_width > 1 and canvas_height > 1:
+            img_h, img_w = frame_rgb.shape[:2]
+            
+            # Calculate scale to fit
+            scale_w = canvas_width / img_w
+            scale_h = canvas_height / img_h
+            self.display_scale = min(scale_w, scale_h)
+            
+            new_w = int(img_w * self.display_scale)
+            new_h = int(img_h * self.display_scale)
+            
+            # Resize for display
+            img_pil = Image.fromarray(frame_rgb)
+            img_pil = img_pil.resize((new_w, new_h), Image.Resampling.BILINEAR)
+            
+            # Calculate centering offsets
+            self.display_offset_x = (canvas_width - new_w) // 2
+            self.display_offset_y = (canvas_height - new_h) // 2
+            
+            imgtk = ImageTk.PhotoImage(image=img_pil)
+            
+            # Update canvas
+            if self.image_item is None:
+                self.image_item = self.canvas.create_image(
+                    self.display_offset_x, self.display_offset_y, 
+                    anchor=tk.NW, image=imgtk
+                )
+            else:
+                self.canvas.coords(self.image_item, self.display_offset_x, self.display_offset_y)
+                self.canvas.itemconfig(self.image_item, image=imgtk)
+            self.canvas.image = imgtk
+            
+    def on_roi_start(self, event):
+        mx, my = self.get_model_coords(event.x, event.y)
+        self.roi_start = (mx, my)
+        self.roi_current = (mx, my)
+
+    def on_roi_drag(self, event):
+        mx, my = self.get_model_coords(event.x, event.y)
+        self.roi_current = (mx, my)
+
+    def on_roi_end(self, event):
+        if self.roi_start:
+            x1, y1 = self.roi_start
+            mx, my = self.get_model_coords(event.x, event.y)
+            x2, y2 = mx, my
+            
+            # Ensure coords are top-left and bottom-right
+            self.roi_coords = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+            
+            # Use ROI if area is significant
+            if (self.roi_coords[2] - self.roi_coords[0]) > 10 and (self.roi_coords[3] - self.roi_coords[1]) > 10:
+                self.activate_roi()
+            
+            self.stop_roi_selection()
+
+    def activate_roi(self):
+        self.roi_active = True
+        self.reset_roi_btn.config(state=tk.NORMAL)
+        self.scale_threshold()
+        self.update_status(f"ROI Active: {self.roi_coords}")
+
+    def reset_roi(self):
+        self.roi_active = False
+        self.roi_coords = None
+        self.reset_roi_btn.config(state=tk.DISABLED)
+        
+        # Restore threshold
+        if self.original_threshold is not None:
+            self.count_threshold.set(self.original_threshold)
+            self.original_threshold = None
+            
+        self.update_status("ROI Reset")
+
+    def scale_threshold(self):
+        if self.roi_coords:
+            x1, y1, x2, y2 = self.roi_coords
+            roi_area = (x2 - x1) * (y2 - y1)
+            total_area = self.fixed_width * self.fixed_height
+            ratio = roi_area / total_area
+            
+            # Store original if not already stored
+            if self.original_threshold is None:
+                self.original_threshold = self.count_threshold.get()
+            
+            new_threshold = int(self.original_threshold * ratio)
+            self.count_threshold.set(max(1, new_threshold)) # Minimum 1
+            print(f"Threshold scaled from {self.original_threshold} to {new_threshold} (Ratio: {ratio:.2f})")
+
+    def update_status(self, message):
+        self.status_label.config(text=f"Status: {message}")
+
     def show_alert(self):
         """Show the alert label when count threshold is exceeded"""
         try:
             if self.alert_label.cget("text") == "":
                 self.alert_label.config(text="⚠️ ALERT: Count Threshold Exceeded! ⚠️")
-                # print("Alert shown!")  # Debug
                 # Start flashing
                 self.flash_alert()
                 
@@ -461,20 +658,19 @@ class CrowdCountingGUI:
                         print(f"Error playing sound: {e}")
         except Exception as e:
             print(f"Error showing alert: {e}")
-    
+
     def hide_alert(self):
         """Hide the alert label when count is below threshold"""
         try:
             if self.alert_label.cget("text") != "":
                 self.alert_label.config(text="", background=self.root.cget("bg"), foreground="black")
-                # print("Alert hidden!")  # Debug
                 
                 # Stop sound
                 if self.sound_enabled:
                     pygame.mixer.music.stop()
         except Exception as e:
             print(f"Error hiding alert: {e}")
-    
+
     def flash_alert(self):
         """Make the alert flash to get attention"""
         if self.alert_active:
@@ -489,17 +685,14 @@ class CrowdCountingGUI:
             
             self.alert_label.config(background=new_bg, foreground=new_fg)
             self.root.after(500, self.flash_alert)  # Flash every 500ms
-    
-    def update_status(self, message):
-        self.status_label.config(text=f"Status: {message}")
-    
+
     def on_closing(self):
         if self.is_processing:
             self.stop_processing()
         if self.sound_enabled:
             pygame.mixer.quit()
         self.root.destroy()
-
+        
 if __name__ == "__main__":
     root = tk.Tk()
     app = CrowdCountingGUI(root)
