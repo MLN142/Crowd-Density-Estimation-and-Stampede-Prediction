@@ -21,7 +21,7 @@ class CrowdCountingGUI:
         self.root = root
         self.root.title("Crowd Counting Application")
         self.root.title("Crowd Counting Application")
-        self.root.geometry("800x600") # Reduced size since video is separate
+        self.root.geometry("600x500") # Reduced size since video is separate
         self.root.resizable(True, True)
         self.video_window = None # Toplevel window for video
         
